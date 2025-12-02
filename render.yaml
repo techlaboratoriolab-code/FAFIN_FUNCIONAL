@@ -2,12 +2,12 @@ services:
   - type: web
     name: lab-processamento-lotes
     env: python
-    buildCommand: "pip install --upgrade pip && pip install -r requirements.txt"
+    buildCommand: "chmod +x build.sh && ./build.sh"
     startCommand: "gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --timeout 300"
     healthCheckPath: /
     envVars:
       - key: PYTHON_VERSION
-        value: 3.11.9
+        value: 3.11
       - key: AWS_ACCESS_KEY
         sync: false
       - key: AWS_SECRET_KEY
