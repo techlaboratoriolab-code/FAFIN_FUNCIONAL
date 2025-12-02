@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: lab-processamento-lotes
+    env: python
+    buildCommand: "pip install --upgrade pip && pip install -r requirements.txt"
+    startCommand: "gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --timeout 300"
+    healthCheckPath: /
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: AWS_ACCESS_KEY
+        sync: false
+      - key: AWS_SECRET_KEY
+        sync: false
+      - key: AWS_REGION
+        value: sa-east-1
+      - key: S3_BUCKET_NAME
+        value: aplis2
+      - key: ORIZON_LOGIN
+        sync: false
+      - key: ORIZON_SENHA
+        sync: false
+      - key: ORIZON_REGISTRO_ANS
+        value: 005711

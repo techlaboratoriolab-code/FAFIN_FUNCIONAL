@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Processador de Lotes</title>
+    <style>
+        body { font-family: Arial, sans-serif; background-color: #f4f4f9; margin: 0; padding: 20px; display: flex; justify-content: center; align-items: center; min-height: 100vh; }
+        .container { background: #fff; padding: 30px; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); width: 100%; max-width: 600px; text-align: center; }
+        h1 { color: #333; }
+        input[type="number"] { width: calc(100% - 22px); padding: 10px; margin-bottom: 20px; border: 1px solid #ccc; border-radius: 4px; }
+        button { background-color: #007bff; color: white; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; transition: background-color 0.3s; }
+        button:hover { background-color: #0056b3; }
+        button:disabled { background-color: #ccc; cursor: not-allowed; }
+        #status-message { margin-top: 20px; font-size: 1.1em; font-weight: bold; }
+        .success { color: #28a745; }
+        .error { color: #dc3545; }
+        .info { color: #17a2b8; }
+        #incompletos-container { margin-top: 30px; text-align: left; display: none; }
+        #incompletos-container h2 { text-align: center; color: #dc3545; }
+        #estatisticas-info { background-color: #fff3cd; border: 1px solid #ffc107; color: #856404; padding: 15px; margin-bottom: 20px; border-radius: 4px; line-height: 1.6; }
+        #incompletos-table-wrapper { max-height: 400px; overflow-y: auto; border: 1px solid #ddd; border-radius: 4px; margin-top: 10px; padding: 15px; background-color: #f9f9f9; }
+        #lista-codigos { white-space: pre-wrap; font-family: 'Courier New', monospace; font-size: 14px; line-height: 1.8; color: #333; }
+        .decision-buttons { text-align: center; margin-top: 20px; }
+        .decision-buttons button { margin: 0 10px; }
+        #btn-continuar { background-color: #28a745; }
+        #btn-continuar:hover { background-color: #218838; }
+        #btn-parar { background-color: #dc3545; }
+        #btn-parar:hover { background-color: #c82333; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>Iniciar Processamento de Lote</h1>
+    <form id="lote-form">
+        <input type="number" id="numeroLote" placeholder="Digite o número do lote" required>
+        <button type="submit" id="submit-btn">Processar Lote</button>
+    </form>
+    <div id="status-message"></div>
+
+    <div id="incompletos-container">
+        <h2>⚠️ Requisições Incompletas Encontradas</h2>
+        <div id="estatisticas-info">
+            <!-- Estatísticas serão inseridas aqui -->
+        </div>
+        <p style="text-align: center; margin-bottom: 15px;">
+            <strong>ATENÇÃO:</strong> As requisições abaixo não possuem a combinação completa de documentos.<br>
+            Deseja continuar o processamento mesmo assim?
+        </p>
+        <div id="incompletos-table-wrapper">
+            <div id="lista-codigos">
+                <!-- A lista de códigos será inserida aqui -->
+            </div>
+        </div>
+        <div class="decision-buttons">
+            <button id="btn-continuar">Sim, Continuar</button>
+            <button id="btn-parar">Não, Parar</button>
+        </div>
+    </div>
+
+    <!-- Seção para Upload de XML (inicialmente oculta) -->
+    <div id="xml-upload-container" style="display: none; margin-top: 20px;">
+        <h2>Etapa Final: Enviar Arquivo de Metadados</h2>
+        <p>O processamento anterior foi concluído. Agora, por favor, envie o arquivo XML ou ZIP correspondente.</p>
+        <form id="xml-upload-form" style="margin-top: 15px;">
+            <input type="file" id="xmlFile" name="xmlFile" accept=".xml,.zip" required style="width: 100%; padding: 8px; box-sizing: border-box;">
+            <button type="submit" id="submit-xml-btn" style="margin-top: 20px;">Enviar Arquivo e Finalizar</button>
+        </form>
+        <div id="xml-status-message" style="margin-top: 15px;"></div>
+    </div>
+</div>
+
+<script>
+    const form = document.getElementById('lote-form');
+    const statusMessage = document.getElementById('status-message');
+    const submitBtn = document.getElementById('submit-btn');
+    const incompletosContainer = document.getElementById('incompletos-container');
+    const incompletosTableWrapper = document.getElementById('incompletos-table-wrapper');
+    const estatisticasInfo = document.getElementById('estatisticas-info');
+    const xmlUploadContainer = document.getElementById('xml-upload-container');
+    const xmlUploadForm = document.getElementById('xml-upload-form');
+    const xmlStatusMessage = document.getElementById('xml-status-message');
+    let pollingInterval;
+
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const numeroLote = document.getElementById('numeroLote').value;
+
+        submitBtn.disabled = true;
+        statusMessage.className = 'info';
+        statusMessage.textContent = `Iniciando processamento para o lote ${numeroLote}...`;
+        incompletosContainer.style.display = 'none';
+        xmlUploadContainer.style.display = 'none'; // Garante que a seção de upload esteja oculta
+
+        // 1. Limpa o estado do servidor antes de começar
+        await fetch('/api/limpar-estado', {
+            method: 'POST'
+        });
+
+        const response = await fetch('/api/processar-lote', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ numeroLote })
+        });
+
+        const result = await response.json();
+
+        if (result.status === 'sucesso') {
+            statusMessage.className = 'success';
+            statusMessage.textContent = result.mensagem + ' Verificando requisições incompletas...';
+            startPolling();
+        } else {
+            statusMessage.className = 'error';
+            statusMessage.textContent = 'Erro: ' + result.mensagem;
+            submitBtn.disabled = false;
+        }
+    });
+
+    function startPolling() {
+        pollingInterval = setInterval(async () => {
+            const res = await fetch('/api/verificar-incompletos');
+            const data = await res.json();
+
+            if (data.status === 'encontrado') {
+                // TEM INCOMPLETOS - Mostrar lista de códigos e estatísticas
+                clearInterval(pollingInterval);
+                statusMessage.className = 'error';
+                statusMessage.textContent = '⚠️ Etapa 1 concluída - Requisições incompletas detectadas!';
+
+                // Exibir estatísticas detalhadas
+                if (data.estatisticas) {
+                    const stats = data.estatisticas;
+                    estatisticasInfo.innerHTML = `
+                        <strong>📊 RESULTADO DA FILTRAGEM:</strong><br><br>
+                        <strong>✅ Requisições COMPLETAS:</strong><br>
+                        &nbsp;&nbsp;• Total de registros: ${stats.total_completos}<br>
+                        &nbsp;&nbsp;• Requisições únicas: ${stats.requisicoes_completas_unicas}<br><br>
+                        <strong>⚠️ Requisições INCOMPLETAS:</strong><br>
+                        &nbsp;&nbsp;• Total de registros: ${stats.total_registros}<br>
+                        &nbsp;&nbsp;• Requisições únicas: ${stats.requisicoes_unicas}
+                    `;
+                    estatisticasInfo.style.display = 'block';
+                } else {
+                    estatisticasInfo.style.display = 'none';
+                }
+
+                // Exibir lista de códigos em formato de texto
+                document.getElementById('lista-codigos').textContent = data.lista_codigos;
+                incompletosTableWrapper.style.display = 'block';
+                document.querySelector('#incompletos-container h2').textContent = '⚠️ Requisições Incompletas Encontradas';
+                document.querySelector('#incompletos-container h2').style.color = '#dc3545';
+                document.querySelector('#incompletos-container p').innerHTML = '<strong>ATENÇÃO:</strong> As requisições abaixo não possuem a combinação completa de documentos.<br><br>Deseja continuar o processamento mesmo assim?';
+                incompletosContainer.style.display = 'block';
+
+            } else if (data.status === 'sem_incompletos') {
+                // NÃO TEM INCOMPLETOS - Mostrar mensagem de sucesso e pedir confirmação
+                clearInterval(pollingInterval);
+                statusMessage.className = 'success';
+                statusMessage.textContent = '✅ Etapa 1 concluída - Todas as requisições estão completas!';
+
+                // Exibir estatísticas de completas
+                if (data.estatisticas) {
+                    const stats = data.estatisticas;
+                    estatisticasInfo.innerHTML = `
+                        <strong>📊 RESULTADO DA FILTRAGEM:</strong><br><br>
+                        <strong>✅ Todas as requisições estão COMPLETAS!</strong><br><br>
+                        &nbsp;&nbsp;• Total de registros: ${stats.total_completos}<br>
+                        &nbsp;&nbsp;• Requisições únicas: ${stats.requisicoes_completas_unicas}
+                    `;
+                    estatisticasInfo.style.display = 'block';
+                    estatisticasInfo.style.backgroundColor = '#d4edda';
+                    estatisticasInfo.style.borderColor = '#c3e6cb';
+                    estatisticasInfo.style.color = '#155724';
+                } else {
+                    estatisticasInfo.style.display = 'none';
+                }
+
+                document.getElementById('lista-codigos').textContent = '';
+                incompletosTableWrapper.style.display = 'none';
+
+                document.querySelector('#incompletos-container h2').textContent = '✓ Verificação Concluída';
+                document.querySelector('#incompletos-container h2').style.color = '#28a745';
+                document.querySelector('#incompletos-container p').innerHTML = '<strong>Deseja prosseguir com o download e processamento das imagens?</strong>';
+                incompletosContainer.style.display = 'block';
+
+            } else if (data.status === 'download_concluido') {
+                // ETAPA DE DOWNLOAD CONCLUÍDA - Mostrar formulário de upload de XML
+                clearInterval(pollingInterval);
+                statusMessage.className = 'success';
+                statusMessage.textContent = '✅ Download e processamento de imagens concluídos!';
+                xmlUploadContainer.style.display = 'block'; // Mostra a seção de upload
+                submitBtn.disabled = false; // Reabilita o botão inicial se necessário
+
+            } else if (data.status === 'processando_em_background') {
+                clearInterval(pollingInterval);
+                statusMessage.className = 'info';
+                statusMessage.textContent = 'O processo foi iniciado e continuará em segundo plano...';
+                setTimeout(() => {
+                    statusMessage.textContent = '';
+                    form.reset();
+                }, 5000);
+            } else if (data.status === 'erro') {
+                clearInterval(pollingInterval);
+                statusMessage.className = 'error';
+                statusMessage.textContent = 'Erro na verificação: ' + data.mensagem;
+                submitBtn.disabled = false;
+            }
+        }, 3000); // Verifica a cada 3 segundos
+    }
+
+    async function sendDecision(decisao) {
+        await fetch('/api/decisao-continuar', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ decisao })
+        });
+
+        incompletosContainer.style.display = 'none';
+        
+        if (decisao === 'continuar') {
+            statusMessage.className = 'info';
+            statusMessage.textContent = `Decisão registrada. Iniciando próxima etapa...`;
+            // Reinicia o polling para verificar a conclusão do download
+            startPolling(); 
+        } else {
+            statusMessage.className = 'info';
+            statusMessage.textContent = `Processo interrompido pelo usuário.`;
+            submitBtn.disabled = false;
+        }
+    }
+
+    document.getElementById('btn-continuar').addEventListener('click', () => sendDecision('continuar'));
+    document.getElementById('btn-parar').addEventListener('click', () => sendDecision('parar'));
+
+    // Manipulador para o formulário de upload de XML
+    xmlUploadForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const xmlFile = document.getElementById('xmlFile').files[0];
+        if (!xmlFile) {
+            xmlStatusMessage.className = 'error';
+            xmlStatusMessage.textContent = 'Por favor, selecione um arquivo.';
+            return;
+        }
+
+        const formData = new FormData();
+        formData.append('xmlFile', xmlFile);
+
+        document.getElementById('submit-xml-btn').disabled = true;
+        xmlStatusMessage.className = 'info';
+        xmlStatusMessage.textContent = 'Enviando arquivo e finalizando o processo...';
+
+        const response = await fetch('/api/processar-xml', {
+            method: 'POST',
+            body: formData // Não precisa de 'Content-Type' header, o browser define
+        });
+
+        const result = await response.json();
+        xmlStatusMessage.className = result.status === 'sucesso' ? 'success' : 'error';
+        xmlStatusMessage.textContent = result.mensagem;
+        document.getElementById('submit-xml-btn').disabled = false;
+    });
+
+</script>
+
+</body>
+</html>
