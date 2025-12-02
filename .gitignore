@@ -23,6 +23,7 @@ uploads/*
 !uploads/.gitkeep
 *.txt
 !requirements.txt
+!runtime.txt
 *.csv
 *.log
 
